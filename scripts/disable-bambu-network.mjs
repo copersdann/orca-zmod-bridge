@@ -1,0 +1,16 @@
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+const p = path.join(process.env.APPDATA, "OrcaSlicer", "OrcaSlicer.conf");
+const raw = fs.readFileSync(p, "utf8").split(/\r?\n/).filter((l) => !l.trim().startsWith("#")).join("\n");
+const c = JSON.parse(raw.replace(/^\uFEFF/, ""));
+c.app.cloud_providers = "";
+c.app.installed_networking = false;
+c.app.hide_plugin_permission_tip = "1";
+delete c.app.network_plugin_version;
+const out = JSON.stringify(c, null, 2);
+const md5 = crypto.createHash("md5").update(out).digest("hex").toUpperCase();
+fs.writeFileSync(p, out + "\n# MD5 checksum " + md5 + "\n", "utf8");
+console.log("cloud_providers:", c.app.cloud_providers);
+console.log("installed_networking:", c.app.installed_networking);
+console.log("md5:", md5);
