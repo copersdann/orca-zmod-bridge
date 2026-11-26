@@ -1,0 +1,15 @@
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import os from "node:os";
+const p = path.join(os.homedir(), "AppData", "Roaming", "OrcaSlicer", "OrcaSlicer.conf");
+const raw = fs.readFileSync(p, "utf8").split(/\r?\n/).filter((l) => !l.trim().startsWith("#")).join("\n");
+const c = JSON.parse(raw.replace(/^\uFEFF/, ""));
+const ip = "192.168.1.183";
+const m = c.local_machines[ip];
+m.nozzle_diameter_str = "0.4";
+m.nozzle_diameter = 0.4;
+c.local_machines[ip] = m;
+const out = JSON.stringify(c, null, 2);
+fs.writeFileSync(p, out + "\n# MD5 checksum " + crypto.createHash("md5").update(out).digest("hex").toUpperCase() + "\n", "utf8");
+console.log("machine object:", JSON.stringify(m));

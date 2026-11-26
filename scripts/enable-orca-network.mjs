@@ -1,0 +1,17 @@
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import os from "node:os";
+const p = path.join(os.homedir(), "AppData", "Roaming", "OrcaSlicer", "OrcaSlicer.conf");
+const raw = fs.readFileSync(p, "utf8").split(/\r?\n/).filter((l) => !l.trim().startsWith("#")).join("\n");
+const c = JSON.parse(raw.replace(/^\uFEFF/, ""));
+c.app.installed_networking = true;
+c.app.use_printer_agents = true;
+c.app.hide_plugin_permission_tip = "1";
+if (!c.app.cloud_providers) c.app.cloud_providers = "orca";
+const out = JSON.stringify(c, null, 2);
+const md5 = crypto.createHash("md5").update(out).digest("hex").toUpperCase();
+fs.writeFileSync(p, out + "\n# MD5 checksum " + md5 + "\n", "utf8");
+console.log("installed_networking:", c.app.installed_networking);
+console.log("use_printer_agents:", c.app.use_printer_agents);
+console.log("cloud_providers:", c.app.cloud_providers);

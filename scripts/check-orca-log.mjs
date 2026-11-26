@@ -1,0 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+const dir = path.join(os.homedir(), "AppData", "Roaming", "OrcaSlicer", "log");
+const files = fs.readdirSync(dir).filter((f) => f.startsWith("debug_")).map((f) => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs })).sort((a,b)=>b.t-a.t);
+const p = path.join(dir, files[0].f);
+const lines = fs.readFileSync(p, "utf8").split(/\r?\n/).slice(-400);
+const hits = lines.filter((l) => /agent|moonraker|octoprint|print host|host|network|plugin|error|fail|unauthor/i.test(l));
+console.log("LOG:", p);
+console.log(hits.slice(-30).join("\n").slice(0, 6000) || "(no matching lines)");
