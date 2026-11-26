@@ -199,8 +199,11 @@ PAGE = r"""
       <div class="mh-kv" id="mh-print-stats"></div>
     </div>
   </div>
-  <div class="mh-card">
-    <h3>Быстрые действия</h3>
+  </div>
+
+  <div class="mh-page" id="page-control">
+    <div class="mh-card">
+      <h3>Управление принтером</h3>
       <div class="mh-actions" id="mh-quick">
         <button data-a="status" title="Только чтение">ⓘ Статус</button>
         <button data-a="files" title="Только чтение">📁 Файлы</button>
@@ -216,9 +219,6 @@ PAGE = r"""
       </div>
       <div class="mh-muted" style="margin-top:6px">Кнопки с G-code и управлением требуют двойного нажатия (второе — подтверждение).</div>
     </div>
-  </div>
-
-  <div class="mh-page" id="page-control">
     <div class="mh-card">
       <h3>Отправка G-code</h3>
       <div class="mh-row"><input type="text" id="mh-cmd" placeholder="M105" /><button id="mh-preview" class="primary">Предпросмотр</button><button id="mh-send">Подтвердить</button></div>
