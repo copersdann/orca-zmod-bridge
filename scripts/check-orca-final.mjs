@@ -1,0 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
+const app = path.join(process.env.APPDATA, "OrcaSlicer", "user", "default");
+const m = JSON.parse(fs.readFileSync(path.join(app, "machine", "Z-Mod Flashforge AD5X 0.4 nozzle.json"), "utf8"));
+const p = JSON.parse(fs.readFileSync(path.join(app, "process", "AD5X Nopoop .4.json"), "utf8"));
+console.log("machine:", m.name, "host_type:", m.host_type, "print_host:", m.print_host);
+console.log("machine before_layer_change:", JSON.stringify(m.before_layer_change_gcode));
+console.log("process post_process:", JSON.stringify(p.post_process));
+console.log("process before_layer_change:", JSON.stringify(p.before_layer_change_gcode));
+console.log("plugin file:", fs.existsSync(path.join(process.env.APPDATA, "OrcaSlicer", "orca_plugins", "mcp_hub_bridge", "mcp_hub_bridge.py")));
