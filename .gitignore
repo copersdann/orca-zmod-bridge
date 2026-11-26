@@ -7,3 +7,4 @@ camera/
 __pycache__/
 *.pyc
 *.log
+test-output*/
