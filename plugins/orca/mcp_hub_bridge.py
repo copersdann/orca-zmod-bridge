@@ -42,6 +42,8 @@ PERMISSION_URLS = [
     DEFAULT_HOST + "/notify/send",
     DEFAULT_HOST + "/settings",
     DEFAULT_HOST + "/workflow/slice_print",
+    DEFAULT_HOST + "/spools/weights",
+    DEFAULT_HOST + "/spools/weights/sync",
 ]
 
 
@@ -232,7 +234,7 @@ PAGE = r"""
     </div>
     <div class="mh-card">
       <h3>IFS / AFC — слоты</h3>
-      <div class="mh-actions"><button id="mh-afc-refresh">Обновить слоты</button></div>
+      <div class="mh-actions"><button id="mh-afc-refresh">Обновить слоты</button><button id="mh-afc-sync" class="primary">Синхронизировать Spoolman</button></div>
       <div class="mh-grid" id="mh-afc-lanes" style="margin-top:8px"></div>
     </div>
     <div class="mh-card">
@@ -324,6 +326,7 @@ PAGE = r"""
       <div class="mh-card" style="margin:0 0 10px">
         <h3>Интеграции</h3>
         <div class="mh-row"><input type="text" id="set-spoolman" placeholder="Spoolman URL" /></div>
+        <div class="mh-row"><input type="text" id="set-scale" placeholder="Адрес весов ESP32 (http://...)"></div>
         <div class="mh-row"><input type="text" id="set-webhook" placeholder="Webhook URL (Telegram)" /></div>
       </div>
       <div class="mh-card" style="margin:0 0 10px">
@@ -404,7 +407,7 @@ PAGE = r"""
       card.innerHTML = '<h3>' + (l.tool || ("L" + l.lane)) + '</h3>' +
         '<div><span class="mh-badge" style="border-color:' + color + '">&nbsp;&nbsp;&nbsp;</span> ' + (l.material || "?") + '</div>' +
         '<div class="mh-muted">' + (l.status || "") + ' · ' + (l.filamentStatus || "") + '</div>' +
-        '<div class="mh-muted">остаток: ' + (l.weight != null ? l.weight + " г" : "—") + '</div>';
+        '<div class="mh-muted">' + (l.measuredGrams != null ? "вес: " + l.measuredGrams + " г" : "остаток: " + (l.weight != null ? l.weight + " г" : "—")) + '</div>';
       box.appendChild(card);
     }
   }
@@ -512,6 +515,7 @@ PAGE = r"""
       if ($("set-printer")) $("set-printer").value = d.data.printer?.baseUrl || "";
       if ($("set-slicer")) $("set-slicer").value = d.data.slicer?.command || "";
       if ($("set-spoolman")) $("set-spoolman").value = d.data.spoolman?.baseUrl || "";
+      if ($("set-scale")) $("set-scale").value = d.data.scale?.baseUrl || "";
       if ($("set-webhook")) $("set-webhook").value = d.data.hasWebhook ? "********" : "";
       if ($("set-auto")) $("set-auto").checked = d.data.autoRefresh !== false;
       if ($("set-interval")) $("set-interval").value = d.data.refreshSeconds || 5;
@@ -564,6 +568,7 @@ PAGE = r"""
   $("mh-orca-presets").onclick = function () { send("orca_presets"); };
   $("mh-orca-events").onclick = function () { send("orca_events"); };
   $("mh-afc-refresh").onclick = function () { send("afc"); };
+  $("mh-afc-sync").onclick = function () { send("sync_weights"); };
   $("mh-wf-plan").onclick = function () {
     send("workflow", {
       input: $("mh-wf-input").value, outputDir: $("mh-wf-outdir").value,
@@ -601,6 +606,7 @@ PAGE = r"""
       printer: { baseUrl: $("set-printer").value },
       slicer: { command: $("set-slicer").value },
       spoolman: { baseUrl: $("set-spoolman").value },
+      scale: { baseUrl: $("set-scale").value },
       notifications: { webhookUrl: wh === "********" ? "" : wh },
     });
     send("save_ui_config", { config: {
@@ -783,10 +789,22 @@ class McpHubPage(orca.pages.PagesPluginCapabilityBase):
             _api_async(self, reply("mh-orca-result"), "POST", "/orca/events/list", {"limit": 30}, timeout=8.0)
         elif kind == "afc":
             def afc_done(ok, result):
-                self.post_message({"type": "afc", "data": result if ok else {"lanes": [], "error": result.get("error")}})
-                if not ok:
-                    self.post_message({"type": "toast", "text": "AFC недоступен", "kind": "err"})
+                def weights_done(wok, weights):
+                    data = dict(result) if ok else {"lanes": [], "error": result.get("error")}
+                    if wok and weights.get("status") == "ok":
+                        for lane in data.get("lanes", []):
+                            match = next((w for w in weights.get("lanes", []) if w.get("lane") == lane.get("lane")), None)
+                            if match:
+                                lane["measuredGrams"] = match.get("grams")
+                    self.post_message({"type": "afc", "data": data})
+                    if not ok:
+                        self.post_message({"type": "toast", "text": "AFC недоступен", "kind": "err"})
+                _api_async(self, weights_done, "GET", "/spools/weights", timeout=8.0)
             _api_async(self, afc_done, "GET", "/printer/afc", timeout=8.0)
+        elif kind == "sync_weights":
+            def sync_done(ok, result):
+                self.post_message({"type": "toast", "text": "Веса синхронизированы со Spoolman" if ok else "Ошибка синхронизации", "kind": "" if ok else "err"})
+            _api_async(self, sync_done, "POST", "/spools/weights/sync", {}, timeout=30.0)
         elif kind == "workflow":
             payload = {
                 "input": str(data.get("input") or "").strip(),
@@ -822,7 +840,7 @@ class McpHubPage(orca.pages.PagesPluginCapabilityBase):
             if ok:
                 self.on_message({"type": "settings_get"})
         elif kind == "settings_save":
-            payload = {k: v for k, v in data.items() if k in ("spoolman", "notifications", "printer", "slicer")}
+            payload = {k: v for k, v in data.items() if k in ("spoolman", "scale", "notifications", "printer", "slicer")}
             def saved(ok, result):
                 self.post_message({"type": "toast", "text": "Настройки сохранены" if ok else "Ошибка сохранения", "kind": "" if ok else "err"})
                 if ok:

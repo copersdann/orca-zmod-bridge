@@ -76,6 +76,7 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
           hasWebhook: !!s.notifications?.webhookUrl,
           printer: { baseUrl: s.printer?.baseUrl || "", protocol: s.printer?.protocol || "" },
           slicer: { command: s.slicer?.command || "" },
+          scale: { baseUrl: s.scale?.baseUrl || "" },
         });
       }
 
@@ -89,6 +90,7 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
         if (postBody.printer?.baseUrl) s.printer = { ...(s.printer ?? {}), baseUrl: String(postBody.printer.baseUrl) };
         if (postBody.printer?.protocol) s.printer = { ...(s.printer ?? {}), protocol: String(postBody.printer.protocol) };
         if (postBody.slicer?.command) s.slicer = { ...(s.slicer ?? {}), command: String(postBody.slicer.command) };
+        if (postBody.scale?.baseUrl !== undefined) s.scale = { ...(s.scale ?? {}), baseUrl: String(postBody.scale.baseUrl) };
         saveFlashforgeSettings(s);
         return send(res, 200, { status: "ok", spoolman: s.spoolman, hasWebhook: !!s.notifications?.webhookUrl });
       }
@@ -120,6 +122,64 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
           status: "ok", protocol: "moonraker", ifsActive: !!zmod.ifs, activeTool: zmod.active_tool_id,
           lanes,
         });
+      }
+
+      if (req.method === "GET" && p === "/spools/weights") {
+        const base = String(settings.scale?.baseUrl || "").replace(/\/+$/, "");
+        if (!base) return send(res, 200, {
+          status: "not_configured",
+          hint: "Задай scale.baseUrl (адрес ESP32 с весами) в настройках",
+        });
+        try {
+          const r = await fetch(base + "/weight", { signal: AbortSignal.timeout(5000) });
+          if (!r.ok) return send(res, 502, { status: "error", httpStatus: r.status });
+          const data = await r.json();
+          const lanes = Array.isArray(data.lanes) ? data.lanes : [1, 2, 3, 4].map((i) => ({
+            lane: i, grams: data[`lane${i}`] ?? data[i] ?? null,
+          }));
+          return send(res, 200, {
+            status: "ok",
+            lanes: lanes.map((l) => ({
+              lane: Number(l.lane), grams: l.grams == null ? null : Number(l.grams),
+              stable: l.stable !== false,
+            })),
+          });
+        } catch (e) { return send(res, 502, { status: "error", error: String(e.message) }); }
+      }
+
+      if (req.method === "POST" && p === "/spools/weights/sync") {
+        const scaleBase = String(settings.scale?.baseUrl || "").replace(/\/+$/, "");
+        const spoolBase = String(settings.spoolman?.baseUrl || "").replace(/\/+$/, "");
+        if (!scaleBase) return send(res, 200, { status: "not_configured", hint: "scale.baseUrl не задан" });
+        if (!spoolBase) return send(res, 200, { status: "not_configured", hint: "spoolman.baseUrl не задан" });
+        try {
+          const wr = await fetch(scaleBase + "/weight", { signal: AbortSignal.timeout(5000) });
+          const wd = await wr.json();
+          const weights = Array.isArray(wd.lanes) ? wd.lanes : [1, 2, 3, 4].map((i) => ({ lane: i, grams: wd[`lane${i}`] ?? wd[i] }));
+          const printerBase = String(settings.printer?.baseUrl || "").replace(/\/+$/, "");
+          const objects = "AFC_lane%20lane1&AFC_lane%20lane2&AFC_lane%20lane3&AFC_lane%20lane4";
+          const ar = await fetch(`${printerBase}/printer/objects/query?${objects}`, { signal: AbortSignal.timeout(5000) });
+          const aj = await ar.json();
+          const status = aj?.result?.status ?? {};
+          const results = [];
+          for (const w of weights) {
+            const lane = status[`AFC_lane lane${w.lane}`] ?? {};
+            const spoolId = lane.spool_id;
+            const grams = Number(w.grams);
+            if (!spoolId || !Number.isFinite(grams)) {
+              results.push({ lane: w.lane, status: "skipped", reason: !spoolId ? "нет spool_id" : "нет веса" });
+              continue;
+            }
+            const r = await fetch(`${spoolBase}/api/v1/spool/${spoolId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ remaining_weight: Math.round(grams * 10) / 10 }),
+              signal: AbortSignal.timeout(5000),
+            });
+            results.push({ lane: w.lane, spoolId, grams, status: r.ok ? "ok" : "error", httpStatus: r.status });
+          }
+          return send(res, 200, { status: "ok", results });
+        } catch (e) { return send(res, 502, { status: "error", error: String(e.message) }); }
       }
 
       if (req.method === "GET" && p === "/spoolman/spools") {

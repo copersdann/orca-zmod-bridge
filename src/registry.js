@@ -22,6 +22,7 @@ const DEFAULTS = {
     defaultFilament: "Flashforge PLA Basic @FF AD5X",
   },
   spoolman: { baseUrl: "http://127.0.0.1:7912" },
+  scale: { baseUrl: "" },
   notifications: { webhookUrl: "" },
   printer: {
     baseUrl: "http://192.168.1.183:7125",
@@ -49,6 +50,7 @@ export function getFlashforgeSettings() {
     ...stored,
     slicer: { ...DEFAULTS.slicer, ...(stored.slicer ?? {}) },
     spoolman: { ...DEFAULTS.spoolman, ...(stored.spoolman ?? {}) },
+    scale: { ...DEFAULTS.scale, ...(stored.scale ?? {}) },
     notifications: { ...DEFAULTS.notifications, ...(stored.notifications ?? {}) },
     printer: {
       ...DEFAULTS.printer,
