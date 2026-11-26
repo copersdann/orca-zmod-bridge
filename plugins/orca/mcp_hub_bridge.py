@@ -236,6 +236,13 @@ PAGE = r"""
       <h3>IFS / AFC — слоты</h3>
       <div class="mh-actions"><button id="mh-afc-refresh">Обновить слоты</button><button id="mh-afc-sync" class="primary">Синхронизировать Spoolman</button></div>
       <div class="mh-grid" id="mh-afc-lanes" style="margin-top:8px"></div>
+      <div class="mh-row" style="margin-top:10px">
+        <select id="mh-color-lane"><option value="1">Слот 1 (T0)</option><option value="2">Слот 2 (T1)</option><option value="3">Слот 3 (T2)</option><option value="4">Слот 4 (T3)</option></select>
+        <input type="text" id="mh-color-type" placeholder="PETG" style="max-width:110px" />
+        <input type="text" id="mh-color-hex" placeholder="FEC600" style="max-width:110px" />
+        <button id="mh-color-set" class="primary">Назначить цвет/материал</button>
+      </div>
+      <div class="mh-muted">Тип: PLA/PETG/ABS/TPU/PLA-CF/PETG-CF/SILK. HEX — без «#». Двойное нажатие = подтверждение.</div>
     </div>
     <div class="mh-card">
       <h3>История команд</h3>
@@ -569,6 +576,22 @@ PAGE = r"""
   $("mh-orca-events").onclick = function () { send("orca_events"); };
   $("mh-afc-refresh").onclick = function () { send("afc"); };
   $("mh-afc-sync").onclick = function () { send("sync_weights"); };
+  let colorArmed = false;
+  $("mh-color-set").onclick = function () {
+    const payload = {
+      lane: $("mh-color-lane").value,
+      type: $("mh-color-type").value.trim() || "PETG",
+      hex: $("mh-color-hex").value.trim().replace(/^#/, ""),
+    };
+    if (!colorArmed) {
+      colorArmed = true;
+      toast("Нажмите ещё раз для подтверждения");
+      setTimeout(function () { colorArmed = false; }, 4000);
+      return;
+    }
+    colorArmed = false;
+    send("set_color", payload);
+  };
   $("mh-wf-plan").onclick = function () {
     send("workflow", {
       input: $("mh-wf-input").value, outputDir: $("mh-wf-outdir").value,
@@ -801,6 +824,26 @@ class McpHubPage(orca.pages.PagesPluginCapabilityBase):
                         self.post_message({"type": "toast", "text": "AFC недоступен", "kind": "err"})
                 _api_async(self, weights_done, "GET", "/spools/weights", timeout=8.0)
             _api_async(self, afc_done, "GET", "/printer/afc", timeout=8.0)
+        elif kind == "set_color":
+            lane = int(data.get("lane") or 0)
+            type_name = str(data.get("type") or "PETG").upper()
+            hex_color = str(data.get("hex") or "").lstrip("#")
+            valid_types = {"PLA", "ABS", "PETG", "TPU", "PLA-CF", "PETG-CF", "SILK", "?"}
+            if lane < 1 or lane > 4 or type_name not in valid_types:
+                self.post_message({"type": "toast", "text": "Неверный слот или тип материала", "kind": "err"})
+                return
+            script = "CHANGE_ZCOLOR SLOT={} TYPE={} HEX={}".format(lane, type_name, hex_color)
+            def color_done(ok, result):
+                self.post_message({
+                    "type": "toast",
+                    "text": "Цвет слота {} назначен".format(lane) if ok else "Ошибка назначения цвета",
+                    "kind": "" if ok else "err",
+                })
+                if ok:
+                    self.on_message({"type": "afc"})
+            _api_async(self, color_done, "POST", "/printer/command", {
+                "command": script, "confirm": True,
+            }, timeout=15.0)
         elif kind == "sync_weights":
             def sync_done(ok, result):
                 self.post_message({"type": "toast", "text": "Веса синхронизированы со Spoolman" if ok else "Ошибка синхронизации", "kind": "" if ok else "err"})
