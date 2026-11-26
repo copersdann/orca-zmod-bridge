@@ -1,7 +1,7 @@
 # orca-zmod-bridge
 
-Только OrcaSlicer + Z-Mod (Flashforge AD5X): локальный HTTP-bridge и плагин-дашборд
-для OrcaSlicer. Никакого универсального MCP-хаба, сторонних MCP-серверов и прошивочных проектов.
+Только OrcaSlicer + Z-Mod (Flashforge AD5X): локальный HTTP-мост и плагин с дашбордом
+для OrcaSlicer. Никакого универсального MCP-хаба, сторонних серверов и прошивочных проектов.
 
 ## Возможности
 
@@ -18,7 +18,7 @@
 
 ## Установка
 
-### 1. Sidecar
+### 1. Фоновый HTTP-сервис
 
 ```powershell
 cd C:\tools\orca-zmod-mcp
@@ -27,7 +27,7 @@ node scripts/smoke.mjs          # проверка всех endpoint'ов
 ```
 
 Для автозапуска — `start-sidecar.cmd` (или поместить его в `shell:Startup`).
-Sidecar доступен только на loopback. Порт меняется через `MCP_HUB_HTTP_PORT`.
+Сервис доступен только на loopback. Порт меняется через `MCP_HUB_HTTP_PORT`.
 
 Скопируй `flashforge.settings.example.json` → `flashforge.settings.json` и поправь:
 - `printer.baseUrl` — адрес Moonraker, например `http://192.168.1.183:7125`;
@@ -53,13 +53,13 @@ plugins/orca/mcp_hub_bridge.py
 Для AD5X после установки Z-Mod включи `AFC=1`, `USE_KAMP=1`, `FORCE_MD5=1`;
 в Orca используй Host Type `Octo/Klipper`, Printer Agent `Moonraker`.
 
-## Endpoint'ы
+## Эндпоинты
 
 | Endpoint | Назначение |
 |---|---|
-| `GET /health`, `GET /diagnostics` | состояние桥 и проверки |
+| `GET /health`, `GET /diagnostics` | состояние сервиса и проверки |
 | `GET /settings`, `POST /settings` | Spoolman / webhook |
-| `GET /printer/status`, `/printer/afc`, `/printer/probe` | Mooukraker |
+| `GET /printer/status`, `/printer/afc`, `/printer/probe` | Moonraker |
 | `POST /printer/command`, `/printer/action` | G-code и управление (confirm:true) |
 | `GET /profiles`, `/orca/presets`, `/orca/info`, `/orca/events` | Orca |
 | `POST /model/inspect`, `/gcode/analyze`, `/slice/done` | анализ |
