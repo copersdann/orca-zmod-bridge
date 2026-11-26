@@ -8,7 +8,7 @@
 # author = "OpenCode"
 # version = "4.0.0"
 # ///
-"""OrcaSlicer plugin bridge to the local mcp-hub HTTP sidecar (v3 dashboard)."""
+"""Плагин OrcaSlicer: дашборд и мост к локальному orca-zmod-bridge (v4)."""
 import json
 import threading
 import urllib.parse
@@ -18,30 +18,29 @@ import orca
 
 DEFAULT_HOST = "http://127.0.0.1:8765"
 PERMISSION_URLS = [
-    DEFAULT_HOST,
     DEFAULT_HOST + "/health",
-    DEFAULT_HOST + "/status/full",
-    DEFAULT_HOST + "/profiles",
     DEFAULT_HOST + "/diagnostics",
-    DEFAULT_HOST + "/hub/tools",
-    DEFAULT_HOST + "/model/inspect",
-    DEFAULT_HOST + "/gcode/analyze",
-    DEFAULT_HOST + "/slice/done",
     DEFAULT_HOST + "/printer/status",
+    DEFAULT_HOST + "/printer/afc",
     DEFAULT_HOST + "/printer/command",
     DEFAULT_HOST + "/printer/action",
     DEFAULT_HOST + "/printer/probe",
-    DEFAULT_HOST + "/reports",
+    DEFAULT_HOST + "/model/inspect",
+    DEFAULT_HOST + "/gcode/analyze",
+    DEFAULT_HOST + "/slice/done",
+    DEFAULT_HOST + "/reports/list",
+    DEFAULT_HOST + "/reports/get",
+    DEFAULT_HOST + "/reports/export",
     DEFAULT_HOST + "/plugin/event",
-    DEFAULT_HOST + "/plugin/events",
+    DEFAULT_HOST + "/plugin/events/list",
+    DEFAULT_HOST + "/profiles/search",
+    DEFAULT_HOST + "/hub/tools/search",
     DEFAULT_HOST + "/orca/info",
-    DEFAULT_HOST + "/orca/presets",
-    DEFAULT_HOST + "/orca/events",
-    DEFAULT_HOST + "/printer/afc",
+    DEFAULT_HOST + "/orca/presets/search",
+    DEFAULT_HOST + "/orca/events/list",
     DEFAULT_HOST + "/spoolman/spools",
     DEFAULT_HOST + "/notify/send",
     DEFAULT_HOST + "/settings",
-    DEFAULT_HOST + "/reports/export",
     DEFAULT_HOST + "/workflow/slice_print",
 ]
 
@@ -170,6 +169,7 @@ PAGE = r"""
     <div class="mh-actions">
       <button id="mh-refresh" class="primary">Обновить</button>
       <button id="mh-doctor">Диагностика</button>
+      <button id="mh-settings-btn" title="Настройки">⚙ Настройки</button>
     </div>
   </div>
   <div class="mh-nav" id="mh-nav">
@@ -202,12 +202,19 @@ PAGE = r"""
   <div class="mh-card">
     <h3>Быстрые действия</h3>
       <div class="mh-actions" id="mh-quick">
-        <button data-a="status">Статус принтера</button>
-        <button data-a="files">Файлы</button>
-        <button data-a="pause">Пауза</button>
-        <button data-a="resume">Продолжить</button>
-        <button data-a="cancel" class="primary">Отмена печати</button>
+        <button data-a="status" title="Только чтение">ⓘ Статус</button>
+        <button data-a="files" title="Только чтение">📁 Файлы</button>
+        <button data-a="gcode" data-cmd="G28" title="Homing">⌂ Homing</button>
+        <button data-a="gcode" data-cmd="M106 S255" title="Вентилятор вкл">🌀 Fan on</button>
+        <button data-a="gcode" data-cmd="M107" title="Вентилятор выкл">🌀 Fan off</button>
+        <button data-a="gcode" data-cmd="M104 S200" title="Нагрев сопла">♨ Сопло 200°</button>
+        <button data-a="gcode" data-cmd="M140 S60" title="Нагрев стола">♨ Стол 60°</button>
+        <button data-a="photo" title="Снимок камеры">📷 Камера</button>
+        <button data-a="pause">⏸ Пауза</button>
+        <button data-a="resume">▶ Продолжить</button>
+        <button data-a="cancel" class="primary">⏹ Отмена печати</button>
       </div>
+      <div class="mh-muted" style="margin-top:6px">Кнопки с G-code и управлением требуют двойного нажатия (второе — подтверждение).</div>
     </div>
   </div>
 
@@ -255,7 +262,7 @@ PAGE = r"""
         <button id="mh-profiles">Найти профили</button>
       </div>
       <pre class="mh-pre" id="mh-profiles-result"></pre>
-      <div class="mh-row"><input type="text" id="mh-tool-query" placeholder="screenshot, issue…" /><button id="mh-tools">Инструменты хаба</button></div>
+      <div class="mh-row"><input type="text" id="mh-tool-query" placeholder="screenshot, issue…" /><button id="mh-tools">Инструменты</button></div>
       <pre class="mh-pre" id="mh-tools-result"></pre>
     </div>
     <div class="mh-card">
@@ -288,7 +295,7 @@ PAGE = r"""
   <div class="mh-page" id="page-orca">
     <div class="mh-card">
       <h3>Установка OrcaSlicer</h3>
-      <div class="mh-actions"><button id="mh-orca-info">Информация</button><button id="mh-orca-presets">Профили AD5X</button><button id="mh-orca-events">События хаба</button></div>
+      <div class="mh-actions"><button id="mh-orca-info">Информация</button><button id="mh-orca-presets">Профили AD5X</button><button id="mh-orca-events">События моста</button></div>
       <pre class="mh-pre" id="mh-orca-result"></pre>
     </div>
     <div class="mh-grid">
@@ -302,6 +309,29 @@ PAGE = r"""
         <div class="mh-row"><input type="text" id="mh-webhook-url" placeholder="https://api.telegram.org/bot.../sendMessage" /><button id="mh-webhook-save">Сохранить</button><button id="mh-webhook-test">Тест</button></div>
         <pre class="mh-pre" id="mh-webhook-result"></pre>
       </div>
+    </div>
+  </div>
+
+  <div id="mh-settings-modal" style="display:none;position:fixed;inset:0;z-index:20;align-items:center;justify-content:center">
+    <div style="position:absolute;inset:0;background:rgba(0,0,0,.55)" id="mh-settings-backdrop"></div>
+    <div style="position:relative;width:min(560px,92vw);max-height:86vh;overflow:auto;border:1px solid var(--orca-border);border-radius:14px;padding:16px;background:var(--orca-bg);box-shadow:0 16px 50px rgba(0,0,0,.45)">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><strong style="font-size:15px">Настройки моста</strong><span style="flex:1"></span><button id="mh-settings-close">✕</button></div>
+      <div class="mh-card" style="margin:0 0 10px">
+        <h3>Подключение</h3>
+        <div class="mh-row"><input type="text" id="set-host" placeholder="http://127.0.0.1:8765" /><input type="text" id="set-printer" placeholder="http://192.168.1.183:7125" /></div>
+        <div class="mh-row"><input type="text" id="set-slicer" placeholder="C:\Program Files\OrcaSlicer\orca-slicer.exe" /></div>
+      </div>
+      <div class="mh-card" style="margin:0 0 10px">
+        <h3>Интеграции</h3>
+        <div class="mh-row"><input type="text" id="set-spoolman" placeholder="Spoolman URL" /></div>
+        <div class="mh-row"><input type="text" id="set-webhook" placeholder="Webhook URL (Telegram)" /></div>
+      </div>
+      <div class="mh-card" style="margin:0 0 10px">
+        <h3>Интерфейс</h3>
+        <div class="mh-row"><label><input type="checkbox" id="set-auto" /> Автообновление</label><input type="number" id="set-interval" min="3" max="600" style="max-width:90px" /><select id="set-lang"><option value="ru">RU</option><option value="en">EN</option></select></div>
+      </div>
+      <div class="mh-actions" style="justify-content:flex-end"><button id="set-save" class="primary">Сохранить</button></div>
+      <div class="mh-muted" id="set-status"></div>
     </div>
   </div>
 </div>
@@ -476,8 +506,16 @@ PAGE = r"""
     if (d.type === "lang") { applyLang(d.lang); return; }
     if (d.type === "afc") { renderAFC(d.data); return; }
     if (d.type === "settings") {
-      if (d.data.spoolman && $("mh-spoolman-url")) $("mh-spoolman-url").value = d.data.spoolman.baseUrl || "";
-      if (d.data.hasWebhook && $("mh-webhook-url")) $("mh-webhook-url").value = "********";
+      if ($("mh-spoolman-url")) $("mh-spoolman-url").value = d.data.spoolman?.baseUrl || "";
+      if ($("mh-webhook-url")) $("mh-webhook-url").value = d.data.hasWebhook ? "********" : "";
+      if ($("set-host")) $("set-host").value = d.data.host || "http://127.0.0.1:8765";
+      if ($("set-printer")) $("set-printer").value = d.data.printer?.baseUrl || "";
+      if ($("set-slicer")) $("set-slicer").value = d.data.slicer?.command || "";
+      if ($("set-spoolman")) $("set-spoolman").value = d.data.spoolman?.baseUrl || "";
+      if ($("set-webhook")) $("set-webhook").value = d.data.hasWebhook ? "********" : "";
+      if ($("set-auto")) $("set-auto").checked = d.data.autoRefresh !== false;
+      if ($("set-interval")) $("set-interval").value = d.data.refreshSeconds || 5;
+      if ($("set-lang")) $("set-lang").value = d.data.language || "ru";
       return;
     }
     if (d.type === "event") { toast("Событие: " + d.name, ""); }
@@ -492,9 +530,21 @@ PAGE = r"""
     for (const p of document.querySelectorAll(".mh-page")) p.classList.remove("active");
     $("page-" + b.dataset.tab).classList.add("active");
   });
+  let armed = null;
   for (const b of $("mh-quick").querySelectorAll("button")) {
     b.onclick = function () {
-      send("printer_action", { action: b.dataset.a, confirm: ["pause", "resume", "cancel"].includes(b.dataset.a) });
+      const a = b.dataset.a;
+      if (a === "status" || a === "files") { send("printer_action", { action: a, confirm: false }); return; }
+      if (armed === b) {
+        armed = null;
+        if (a === "gcode") send("command", { command: b.dataset.cmd, confirm: true });
+        else if (a === "photo") send("printer_action", { action: "camera", confirm: true });
+        else send("printer_action", { action: a, confirm: true });
+        return;
+      }
+      armed = b;
+      toast("Нажмите ещё раз для подтверждения");
+      setTimeout(function () { if (armed === b) armed = null; }, 4000);
     };
   }
   $("mh-refresh").onclick = function () { send("refresh"); };
@@ -535,6 +585,34 @@ PAGE = r"""
     send("settings_save", { notifications: { webhookUrl: v === "********" ? "" : v } });
   };
   $("mh-webhook-test").onclick = function () { send("notify_test", { text: "MCP Hub: тестовое уведомление" }); };
+
+  function openSettings() {
+    const m = $("mh-settings-modal");
+    m.style.display = "flex";
+    send("settings_get");
+  }
+  function closeSettings() { $("mh-settings-modal").style.display = "none"; }
+  $("mh-settings-btn").onclick = openSettings;
+  $("mh-settings-close").onclick = closeSettings;
+  $("mh-settings-backdrop").onclick = closeSettings;
+  $("set-save").onclick = function () {
+    const wh = $("set-webhook").value;
+    send("settings_save", {
+      printer: { baseUrl: $("set-printer").value },
+      slicer: { command: $("set-slicer").value },
+      spoolman: { baseUrl: $("set-spoolman").value },
+      notifications: { webhookUrl: wh === "********" ? "" : wh },
+    });
+    send("save_ui_config", { config: {
+      host: $("set-host").value || "http://127.0.0.1:8765",
+      refreshSeconds: Number($("set-interval").value) || 5,
+      autoRefresh: $("set-auto").checked,
+      language: $("set-lang").value,
+      logLifecycleEvents: true,
+    } });
+    $("set-status").textContent = "Сохранено";
+    setTimeout(closeSettings, 700);
+  };
   send("settings_get");
 })();
 </script>
@@ -555,7 +633,7 @@ class McpHubPage(orca.pages.PagesPluginCapabilityBase):
         return r"""
         <style>.mcfg label{display:block;margin:8px 0 4px}.mcfg input[type=text],.mcfg input[type=number]{width:100%}</style>
         <div class="mcfg">
-          <label>Адрес хаба</label><input type="text" id="cfg-host" />
+          <label>Адрес моста</label><input type="text" id="cfg-host" />
           <label>Интервал обновления, сек (0 = выключить)</label><input type="number" id="cfg-interval" min="0" max="600" />
           <label>Язык интерфейса</label>
           <select id="cfg-lang"><option value="ru">Русский</option><option value="en">English</option></select>
@@ -615,8 +693,8 @@ class McpHubPage(orca.pages.PagesPluginCapabilityBase):
 
         _api_async(self, collect("health"), "GET", "/health", timeout=2.0)
         _api_async(self, collect("printer"), "GET", "/printer/status", timeout=2.0)
-        _api_async(self, collect("reports"), "GET", "/reports?limit=8", timeout=2.0)
-        _api_async(self, collect("events"), "GET", "/plugin/events?limit=20", timeout=2.0)
+        _api_async(self, collect("reports"), "POST", "/reports/list", {"limit": 8}, timeout=2.0)
+        _api_async(self, collect("events"), "POST", "/plugin/events/list", {"limit": 20}, timeout=2.0)
 
     def on_message(self, data):
         kind = data.get("type")
@@ -676,29 +754,33 @@ class McpHubPage(orca.pages.PagesPluginCapabilityBase):
                 return
             _api_async(self, reply("mh-gcode-result", "G-code проанализирован"), "POST", "/gcode/analyze", {"path": path}, timeout=15.0)
         elif kind == "profiles":
-            _api_async(self, reply("mh-profiles-result"), "GET",
-                       "/profiles?kind={}&query={}&limit=60".format(
-                           str(data.get("kind") or "all"), urllib.parse.quote(str(data.get("query") or ""))),
-                       timeout=8.0)
+            _api_async(self, reply("mh-profiles-result"), "POST", "/profiles/search", {
+                   "kind": str(data.get("kind") or "all"),
+                   "query": str(data.get("query") or ""), "limit": 60,
+               }, timeout=8.0)
         elif kind == "tools":
-            _api_async(self, reply("mh-tools-result"), "GET",
-                       "/hub/tools?query=" + urllib.parse.quote(str(data.get("query") or "")), timeout=15.0)
+            _api_async(self, reply("mh-tools-result"), "POST", "/hub/tools/search", {
+                   "query": str(data.get("query") or ""), "limit": 60,
+               }, timeout=15.0)
         elif kind == "probe":
             subnet = str(data.get("subnet") or "").strip()
-            suffix = "&subnet=" + urllib.parse.quote(subnet) if subnet else ""
-            _api_async(self, reply("mh-probe-result", "Сканирование завершено"), "GET",
-                       "/printer/probe?limit=60&timeoutMs=400" + suffix, timeout=40.0)
+            _api_async(self, reply("mh-probe-result", "Сканирование завершено"), "POST", "/printer/probe", {
+                "subnet": subnet or None, "limit": 60, "timeoutMs": 400,
+            }, timeout=40.0)
         elif kind == "report":
             name = str(data.get("name") or "").strip()
             if name:
-                _api_async(self, reply("mh-report-detail"), "GET",
-                           "/reports/get?name=" + urllib.parse.quote(name), timeout=8.0)
+                _api_async(self, reply("mh-report-detail"), "POST", "/reports/get", {
+                    "name": name,
+                }, timeout=8.0)
         elif kind == "orca_info":
             _api_async(self, reply("mh-orca-result"), "GET", "/orca/info", timeout=8.0)
         elif kind == "orca_presets":
-            _api_async(self, reply("mh-orca-result"), "GET", "/orca/presets?source=orca&kind=process&query=AD5X&limit=20", timeout=8.0)
+            _api_async(self, reply("mh-orca-result"), "POST", "/orca/presets/search", {
+                "source": "orca", "kind": "process", "query": "AD5X", "limit": 20,
+            }, timeout=8.0)
         elif kind == "orca_events":
-            _api_async(self, reply("mh-orca-result"), "GET", "/orca/events?limit=30", timeout=8.0)
+            _api_async(self, reply("mh-orca-result"), "POST", "/orca/events/list", {"limit": 30}, timeout=8.0)
         elif kind == "afc":
             def afc_done(ok, result):
                 self.post_message({"type": "afc", "data": result if ok else {"lanes": [], "error": result.get("error")}})
@@ -721,10 +803,26 @@ class McpHubPage(orca.pages.PagesPluginCapabilityBase):
             _api_async(self, reply("mh-spoolman-result"), "GET", "/spoolman/spools", timeout=8.0)
         elif kind == "settings_get":
             def settings_done(ok, result):
-                self.post_message({"type": "settings", "data": result if ok else {}})
+                data = dict(result) if ok else {}
+                cfg = _cfg(self)
+                data.update({
+                    "host": cfg.get("host", DEFAULT_HOST),
+                    "autoRefresh": cfg.get("autoRefresh", True),
+                    "refreshSeconds": cfg.get("refreshSeconds", 5),
+                    "language": cfg.get("language", "ru"),
+                })
+                self.post_message({"type": "settings", "data": data})
             _api_async(self, settings_done, "GET", "/settings", timeout=5.0)
+        elif kind == "save_ui_config":
+            try:
+                ok = self.save_config(json.dumps(data.get("config", {})))
+            except Exception:
+                ok = False
+            self.post_message({"type": "toast", "text": "Настройки интерфейса сохранены" if ok else "Ошибка сохранения", "kind": "" if ok else "err"})
+            if ok:
+                self.on_message({"type": "settings_get"})
         elif kind == "settings_save":
-            payload = {k: v for k, v in data.items() if k in ("spoolman", "notifications")}
+            payload = {k: v for k, v in data.items() if k in ("spoolman", "notifications", "printer", "slicer")}
             def saved(ok, result):
                 self.post_message({"type": "toast", "text": "Настройки сохранены" if ok else "Ошибка сохранения", "kind": "" if ok else "err"})
                 if ok:
@@ -740,8 +838,9 @@ class McpHubPage(orca.pages.PagesPluginCapabilityBase):
                     self.post_message({"type": "toast", "text": "Экспорт: " + result["exportedTo"]})
                 else:
                     self.post_message({"type": "toast", "text": "Ошибка экспорта", "kind": "err"})
-            _api_async(self, export_done, "GET",
-                       "/reports/export?name=" + urllib.parse.quote(str(data.get("name") or "")), timeout=8.0)
+            _api_async(self, export_done, "POST", "/reports/export", {
+                "name": str(data.get("name") or ""),
+            }, timeout=8.0)
 
     def on_lifecycle_event(self, event, ctx):
         name = _event_name(event)
@@ -776,7 +875,7 @@ class McpHubSliceReport(orca.slicing.SlicingPipelineCapabilityBase):
     def get_config_ui(self):
         return r"""
         <div style="font-size:13px">
-          <label>Адрес хаба</label><br/><input type="text" id="s-host" style="width:100%" />
+          <label>Адрес моста</label><br/><input type="text" id="s-host" style="width:100%" />
           <label><input type="checkbox" id="s-enabled" /> Анализировать после нарезки</label>
           <label><input type="checkbox" id="s-model" /> Передавать статистику модели</label>
           <button id="s-save">Сохранить</button><span id="s-status"></span>
@@ -837,7 +936,7 @@ SCRIPT_HTML = r"""
   <h3>MCP Hub</h3>
   <label>Действие</label>
   <select id="mh-action">
-    <option value="health">Статус хаба</option>
+    <option value="health">Статус моста</option>
     <option value="printer">Статус принтера</option>
     <option value="profiles">Профили AD5X</option>
     <option value="howto">Как включить автоанализ</option>
@@ -866,7 +965,9 @@ class McpHubScript(orca.script.ScriptPluginCapabilityBase):
         if action == "printer":
             ok, result = _api(self, "GET", "/printer/status", timeout=2.0)
         elif action == "profiles":
-            ok, result = _api(self, "GET", "/profiles?kind=machine&query=AD5X&limit=10", timeout=2.0)
+            ok, result = _api(self, "POST", "/profiles/search", {
+                "kind": "machine", "query": "AD5X", "limit": 10,
+            }, timeout=2.0)
         else:
             ok, result = _api(self, "GET", "/health", timeout=2.0)
         if not ok:

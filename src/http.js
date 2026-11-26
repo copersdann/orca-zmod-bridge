@@ -46,6 +46,7 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
     try {
       if (req.method === "OPTIONS") return send(res, 204, {});
 
+      const postBody = req.method === "POST" ? await readJsonBody(req) : {};
       const settings = getFlashforgeSettings();
       const token = settings?.http?.token;
       if (token && req.headers["x-mcp-hub-token"] !== token) {
@@ -73,16 +74,21 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
           spoolman: s.spoolman ?? { baseUrl: "" },
           notifications: { webhookUrl: s.notifications?.webhookUrl ? "***" : "" },
           hasWebhook: !!s.notifications?.webhookUrl,
+          printer: { baseUrl: s.printer?.baseUrl || "", protocol: s.printer?.protocol || "" },
+          slicer: { command: s.slicer?.command || "" },
         });
       }
 
       if (req.method === "POST" && p === "/settings") {
-        const body = await readJsonBody(req);
+
         const s = getFlashforgeSettings();
-        if (body.spoolman?.baseUrl) s.spoolman = { ...(s.spoolman ?? {}), baseUrl: String(body.spoolman.baseUrl) };
-        if (body.notifications?.webhookUrl) {
-          s.notifications = { ...(s.notifications ?? {}), webhookUrl: String(body.notifications.webhookUrl) };
+        if (postBody.spoolman?.baseUrl) s.spoolman = { ...(s.spoolman ?? {}), baseUrl: String(postBody.spoolman.baseUrl) };
+        if (postBody.notifications?.webhookUrl) {
+          s.notifications = { ...(s.notifications ?? {}), webhookUrl: String(postBody.notifications.webhookUrl) };
         }
+        if (postBody.printer?.baseUrl) s.printer = { ...(s.printer ?? {}), baseUrl: String(postBody.printer.baseUrl) };
+        if (postBody.printer?.protocol) s.printer = { ...(s.printer ?? {}), protocol: String(postBody.printer.protocol) };
+        if (postBody.slicer?.command) s.slicer = { ...(s.slicer ?? {}), command: String(postBody.slicer.command) };
         saveFlashforgeSettings(s);
         return send(res, 200, { status: "ok", spoolman: s.spoolman, hasWebhook: !!s.notifications?.webhookUrl });
       }
@@ -134,9 +140,9 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
       }
 
       if (req.method === "POST" && p === "/notify/send") {
-        const body = await readJsonBody(req);
+
         const url = String(settings.notifications?.webhookUrl || "");
-        const text = String(body.text || "").slice(0, 2000);
+        const text = String(postBody.text || "").slice(0, 2000);
         if (!text) return send(res, 400, { error: "text required" });
         if (!url) return send(res, 200, {
           status: "not_configured",
@@ -146,7 +152,7 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
         try {
           const r = await fetch(url, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text, event: body.event || "mcp-hub" }),
+            body: JSON.stringify({ text, event: postBody.event || "mcp-hub" }),
             signal: AbortSignal.timeout(8000),
           });
           return send(res, r.ok ? 200 : 502, { status: r.ok ? "ok" : "error", httpStatus: r.status, text });
@@ -166,17 +172,17 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
       }
 
       if (req.method === "POST" && p === "/workflow/slice_print") {
-        const body = await readJsonBody(req);
-        if (!body.input || !fs.existsSync(body.input)) return send(res, 400, { error: `input not found: ${body.input}` });
-        const confirm = body.confirm === true;
+
+        if (!postBody.input || !fs.existsSync(postBody.input)) return send(res, 400, { error: `input not found: ${postBody.input}` });
+        const confirm = postBody.confirm === true;
         const sliceArgs = {
-          input: body.input,
-          outputDir: body.outputDir || path.dirname(body.input),
-          machineProfile: body.machineProfile,
-          processProfile: body.processProfile,
-          filamentProfile: body.filamentProfile,
-          layerHeight: body.layerHeight,
-          nozzleDiameter: body.nozzleDiameter,
+          input: postBody.input,
+          outputDir: postBody.outputDir || path.dirname(postBody.input),
+          machineProfile: postBody.machineProfile,
+          processProfile: postBody.processProfile,
+          filamentProfile: postBody.filamentProfile,
+          layerHeight: postBody.layerHeight,
+          nozzleDiameter: postBody.nozzleDiameter,
           dryRun: !confirm,
           confirm: false,
           exportStatistics: true,
@@ -202,6 +208,77 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
         });
       }
 
+      // POST-варианты с фиксированными URL: плагин запрашивает разрешение один раз.
+      if (req.method === "POST" && p === "/reports/list") {
+        const result = await bridge.callTool("flashforge.profiles", {}).catch(() => null);
+        const dir = path.join(ROOT, "reports");
+        const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(".report.json")).slice(-Number(postBody.limit || 10)) : [];
+        return send(res, 200, { reports: files.map((f) => ({ name: f, path: path.join(dir, f) })) });
+      }
+
+      if (req.method === "POST" && p === "/plugin/events/list") {
+        const result = await bridge.callTool("orca.plugin_events", { limit: Number(postBody.limit || 30), event: postBody.event });
+        return send(res, 200, parseTextMaybeJson(textOf(result)));
+      }
+
+      if (req.method === "POST" && p === "/profiles/search") {
+        const result = await bridge.callTool("flashforge.profiles", {
+          kind: postBody.kind || "all", query: postBody.query || "", limit: Number(postBody.limit || 60),
+        });
+        return send(res, 200, parseTextMaybeJson(textOf(result)));
+      }
+
+      if (req.method === "POST" && p === "/hub/tools/search") {
+        const tools = await bridge.allTools();
+        const q = String(postBody.query || "").toLowerCase();
+        const list = tools.filter((t) => !q || `${t.name} ${t.description || ""}`.toLowerCase().includes(q))
+          .slice(0, Number(postBody.limit || 60));
+        return send(res, 200, { returned: list.length, tools: list });
+      }
+
+      if (req.method === "POST" && p === "/printer/probe") {
+        const result = await bridge.callTool("flashforge.printer_probe", {
+          subnet: postBody.subnet || undefined,
+          limit: Number(postBody.limit || 60),
+          timeoutMs: Number(postBody.timeoutMs || 400),
+        });
+        return send(res, result.isError ? 400 : 200, parseTextMaybeJson(textOf(result)));
+      }
+
+      if (req.method === "POST" && p === "/reports/get") {
+        const name = String(postBody.name || "");
+        if (!name || !/^[\w.\-+ ]+\.report\.json$/.test(name)) return send(res, 400, { error: "invalid report name" });
+        const file = path.join(ROOT, "reports", name);
+        if (!fs.existsSync(file)) return send(res, 404, { error: "report not found" });
+        try { return send(res, 200, JSON.parse(fs.readFileSync(file, "utf8"))); }
+        catch (e) { return send(res, 500, { error: String(e.message) }); }
+      }
+
+      if (req.method === "POST" && p === "/reports/export") {
+        const name = String(postBody.name || "");
+        if (!name || !/^[\w.\-+ ]+\.report\.json$/.test(name)) return send(res, 400, { error: "invalid report name" });
+        const source = path.join(ROOT, "reports", name);
+        if (!fs.existsSync(source)) return send(res, 404, { error: "report not found" });
+        const dir = path.join(ROOT, "exports");
+        fs.mkdirSync(dir, { recursive: true });
+        const target = path.join(dir, name);
+        fs.copyFileSync(source, target);
+        return send(res, 200, { status: "ok", exportedTo: target });
+      }
+
+      if (req.method === "POST" && p === "/orca/presets/search") {
+        const result = await bridge.callTool("orca.presets", {
+          source: postBody.source || "all", kind: postBody.kind || "process", query: postBody.query || "",
+          limit: Number(postBody.limit || 20),
+        });
+        return send(res, 200, parseTextMaybeJson(textOf(result)));
+      }
+
+      if (req.method === "POST" && p === "/orca/events/list") {
+        const result = await bridge.callTool("orca.plugin_events", { limit: Number(postBody.limit || 30), event: postBody.event });
+        return send(res, 200, parseTextMaybeJson(textOf(result)));
+      }
+
       if (req.method === "GET" && p === "/orca/info") {
         const result = await bridge.callTool("orca.info", {});
         return send(res, 200, parseTextMaybeJson(textOf(result)));
@@ -218,8 +295,8 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
       }
 
       if (req.method === "POST" && p === "/orca/project") {
-        const body = await readJsonBody(req);
-        const result = await bridge.callTool("orca.project", { path: body.path });
+
+        const result = await bridge.callTool("orca.project", { path: postBody.path });
         return send(res, result.isError ? 400 : 200, parseTextMaybeJson(textOf(result)));
       }
 
@@ -265,35 +342,35 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
       }
 
       if (req.method === "POST" && p === "/model/inspect") {
-        const body = await readJsonBody(req);
-        if (!body.path || !fs.existsSync(body.path)) {
-          return send(res, 400, { error: `model not found: ${body.path}` });
+
+        if (!postBody.path || !fs.existsSync(postBody.path)) {
+          return send(res, 400, { error: `model not found: ${postBody.path}` });
         }
         const result = await bridge.callTool("flashforge.inspect_model", {
-          path: body.path, buildVolume: body.buildVolume,
+          path: postBody.path, buildVolume: postBody.buildVolume,
         });
         return send(res, result.isError ? 400 : 200, parseTextMaybeJson(textOf(result)));
       }
 
       if (req.method === "POST" && p === "/gcode/analyze") {
-        const body = await readJsonBody(req);
-        if (!body.path || !fs.existsSync(body.path)) {
-          return send(res, 400, { error: `gcode not found: ${body.path}` });
+
+        if (!postBody.path || !fs.existsSync(postBody.path)) {
+          return send(res, 400, { error: `gcode not found: ${postBody.path}` });
         }
-        const result = await bridge.callTool("flashforge.analyze_gcode", { path: body.path });
+        const result = await bridge.callTool("flashforge.analyze_gcode", { path: postBody.path });
         return send(res, result.isError ? 400 : 200, parseTextMaybeJson(textOf(result)));
       }
 
       if (req.method === "POST" && p === "/printer/action") {
-        const body = await readJsonBody(req);
-        const action = body.action || "status";
+
+        const action = postBody.action || "status";
         const result = await bridge.callTool("flashforge.printer", {
           action,
-          host: body.host,
-          command: body.command,
-          file: body.file,
-          params: body.params,
-          confirm: body.confirm === true,
+          host: postBody.host,
+          command: postBody.command,
+          file: postBody.file,
+          params: postBody.params,
+          confirm: postBody.confirm === true,
         });
         return send(res, result.isError ? 400 : 200, parseTextMaybeJson(textOf(result)));
       }
@@ -308,7 +385,7 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
       }
 
       if (req.method === "POST" && p === "/plugin/event") {
-        const body = await readJsonBody(req);
+
         fs.mkdirSync(REPORTS_DIR, { recursive: true });
         const record = { at: new Date().toISOString(), ...body };
         fs.appendFileSync(EVENTS_FILE, JSON.stringify(record) + "\n", "utf8");
@@ -356,34 +433,34 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
       }
 
       if (req.method === "POST" && p === "/printer/command") {
-        const body = await readJsonBody(req);
-        if (!body.command) return send(res, 400, { error: "command required" });
+
+        if (!postBody.command) return send(res, 400, { error: "command required" });
         const result = await bridge.callTool("flashforge.printer", {
           action: "gcode",
-          command: body.command,
-          confirm: body.confirm === true,
-          host: body.host,
+          command: postBody.command,
+          confirm: postBody.confirm === true,
+          host: postBody.host,
         });
         return send(res, result.isError ? 400 : 200, parseTextMaybeJson(textOf(result)));
       }
 
       if (req.method === "POST" && p === "/slice/done") {
-        const body = await readJsonBody(req);
-        if (!body.gcodePath || !fs.existsSync(body.gcodePath)) {
-          return send(res, 400, { error: `gcodePath not found: ${body.gcodePath}` });
+
+        if (!postBody.gcodePath || !fs.existsSync(postBody.gcodePath)) {
+          return send(res, 400, { error: `gcodePath not found: ${postBody.gcodePath}` });
         }
-        const result = await bridge.callTool("flashforge.analyze_gcode", { path: body.gcodePath });
+        const result = await bridge.callTool("flashforge.analyze_gcode", { path: postBody.gcodePath });
         const analysis = parseTextMaybeJson(textOf(result));
         let savedTo = null;
         if (!result.isError) {
           fs.mkdirSync(REPORTS_DIR, { recursive: true });
-          const name = path.basename(body.gcodePath, path.extname(body.gcodePath)) + ".report.json";
+          const name = path.basename(postBody.gcodePath, path.extname(postBody.gcodePath)) + ".report.json";
           savedTo = path.join(REPORTS_DIR, name);
           fs.writeFileSync(savedTo, JSON.stringify({
             receivedAt: new Date().toISOString(),
-            gcodePath: body.gcodePath,
-            outputName: body.outputName || null,
-            orcaVersion: body.orcaVersion || null,
+            gcodePath: postBody.gcodePath,
+            outputName: postBody.outputName || null,
+            orcaVersion: postBody.orcaVersion || null,
             analysis,
           }, null, 2), "utf8");
         }
@@ -419,10 +496,10 @@ export function createHttpServer(bridge, { port = 8765 } = {}) {
   });
 
   server.listen(port, "127.0.0.1", () => {
-    process.stderr.write(`[mcp-hub] HTTP sidecar on http://127.0.0.1:${port}\n`);
+    process.stderr.write(`[orca-zmod-bridge] HTTP-мост на http://127.0.0.1:${port}\n`);
   });
   server.on("error", (err) => {
-    process.stderr.write(`[mcp-hub] HTTP sidecar error: ${err.message}\n`);
+    process.stderr.write(`[orca-zmod-bridge] ошибка HTTP-моста: ${err.message}\n`);
   });
   return server;
 }

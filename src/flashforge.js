@@ -1,5 +1,5 @@
 /**
- * Built-in 3D printing / FlashForge domain module for mcp-hub.
+ * 3D-домен FlashForge для orca-zmod-bridge.
  * No child process: works directly with local files, installed Flash Studio presets,
  * G-code/STL analysis and a configurable HTTP adapter for AD5X/AD5M printers.
  */

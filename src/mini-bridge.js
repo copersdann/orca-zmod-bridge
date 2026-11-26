@@ -1,4 +1,4 @@
-/** Minimal tool dispatcher for the standalone Orca/Z-Mod sidecar. No MCP hub, no 3rd-party servers. */
+/** Минимальный диспетчер инструментов для фонового сервиса Orca/Z-Mod. */
 import fs from "node:fs";
 import path from "node:path";
 import * as flashforge from "./flashforge.js";
