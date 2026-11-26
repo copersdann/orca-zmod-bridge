@@ -1,4 +1,5 @@
 node_modules/
+backups/
 flashforge.settings.json
 secrets.local.json
 reports/
