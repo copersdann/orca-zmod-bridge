@@ -1,0 +1,14 @@
+{
+  "name": "orca-zmod-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HTTP bridge and OrcaSlicer plugin for Z-Mod Flashforge AD5X: dashboard, Moonraker control, slicing and G-code analysis.",
+  "type": "module",
+  "main": "src/standalone-http.js",
+  "scripts": {
+    "start": "node src/standalone-http.js",
+    "check": "node --check src/standalone-http.js && node --check src/http.js && node --check src/mini-bridge.js",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "engines": { "node": ">=20" }
+}

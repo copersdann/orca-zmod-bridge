@@ -1,0 +1,9 @@
+node_modules/
+flashforge.settings.json
+secrets.local.json
+reports/
+exports/
+camera/
+__pycache__/
+*.pyc
+*.log

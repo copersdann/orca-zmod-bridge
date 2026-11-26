@@ -1,0 +1,20 @@
+{
+  "slicer": {
+    "command": "C:\\Program Files\\OrcaSlicer\\orca-slicer.exe",
+    "defaultMachine": "Z-Mod Flashforge AD5X 0.4 nozzle",
+    "defaultProcess": "AD5X Nopoop .4",
+    "defaultFilament": "Flashforge PLA Basic @FF AD5X"
+  },
+  "printer": {
+    "baseUrl": "http://192.168.1.183:7125",
+    "protocol": "moonraker",
+    "timeoutMs": 8000,
+    "authHeader": ""
+  },
+  "spoolman": {
+    "baseUrl": "http://127.0.0.1:7912"
+  },
+  "notifications": {
+    "webhookUrl": ""
+  }
+}
